@@ -73,6 +73,39 @@ struct GodotBinding {
 // &mut references are handed out (except for registry, see below). Overall, UnsafeCell/RefCell + Sync might be a safer abstraction.
 static mut BINDING: Option<GodotBinding> = None;
 
+fn is_godot_4_0(get_proc_address: fptr::GetProcAddress) -> bool {
+    // In Godot 4.0.x, before the new GetProcAddress mechanism, the init function looked as follows.
+    // In place of the `get_proc_address` function pointer, the `p_interface` data pointer was passed.
+    //
+    // typedef GDExtensionBool (*GDExtensionInitializationFunction)(
+    //     const GDExtensionInterface *p_interface,
+    //     GDExtensionClassLibraryPtr p_library,
+    //     GDExtensionInitialization *r_initialization
+    // );
+    //
+    // Also, the GDExtensionInterface struct was beginning with these fields:
+    //
+    // typedef struct {
+    //     uint32_t version_major;
+    //     uint32_t version_minor;
+    //     uint32_t version_patch;
+    //     const char *version_string;
+    //     ...
+    // } GDExtensionInterface;
+    //
+    // As a result, we can try to interpret the function pointer as a legacy GDExtensionInterface data pointer and check if the
+    // first fields have values version_major=4 and version_minor=0. This might be deep in UB territory, but the alternative is
+    // to not be able to detect Godot 4.0.x at all, and run into UB anyway.
+
+    let data_ptr = get_proc_address as *const u32; // `as` casts just eat this for breakfast.
+
+    // Assumption is that we have at least 8 bytes of memory to safely read from (for both the data and the function case).
+    let major = unsafe { data_ptr.read() };
+    let minor = unsafe { data_ptr.offset(1).read() };
+
+    return major == 4 && minor == 0;
+}
+
 /// # Safety
 ///
 /// - The `interface` pointer must be a valid pointer to a [`GDExtensionInterface`] object.
@@ -83,16 +116,37 @@ pub unsafe fn initialize(
     get_proc_address: GDExtensionInterfaceGetProcAddress,
     library: GDExtensionClassLibraryPtr,
 ) {
-    out!("Initialize...");
+    out!("Initialize gdext...");
+
+    let get_proc_address = get_proc_address.expect("Invalid get_proc_address function pointer");
+
+    // If we run into an old binary, proceeding would be UB -> panic.
+    // TODO in theory, we could provide a compat layer by using the old gdextension_interface.h, either at runtime or via feature.
+    if is_godot_4_0(get_proc_address) {
+        panic!(
+            "gdext was compiled against a newer Godot version (4.1+), but initialized with a legacy (4.0.x) setup.\
+            \nIn your .gdextension file, make sure to use `compatibility_minimum = 4.1` under the [configuration] section."
+        );
+    }
+
+    let get_godot_version = get_proc_address(crate::c_str(b"get_godot_version\0"));
+    out!(
+        "Loaded get_version function: {:p}",
+        get_godot_version.unwrap()
+    );
 
     let interface = GDExtensionInterface::load(get_proc_address);
+    out!("Loaded interface.");
+
     let method_table = GlobalMethodTable::load(&interface);
+    out!("Loaded builtin table.");
 
     BINDING = Some(GodotBinding {
         interface,
         method_table,
         library,
     });
+    out!("Assigned binding.");
 
     let mut version = GDExtensionGodotVersion {
         major: 0,
@@ -109,6 +163,13 @@ pub unsafe fn initialize(
             .to_str()
             .expect("unknown Godot version")
     );
+}
+
+/// # Safety
+///
+/// Must be called from the same thread as `initialize()` previously.
+pub unsafe fn is_initialized() -> bool {
+    BINDING.is_some()
 }
 
 /// # Safety
@@ -224,6 +285,8 @@ pub fn to_const_ptr<T>(ptr: *mut T) -> *const T {
     ptr as *const T
 }
 
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+
 /// Convert a GDExtension pointer type to its uninitialized version.
 pub trait AsUninit {
     type Ptr;
@@ -256,6 +319,25 @@ impl_as_uninit!(GDExtensionVariantPtr, GDExtensionUninitializedVariantPtr);
 impl_as_uninit!(GDExtensionStringPtr, GDExtensionUninitializedStringPtr);
 impl_as_uninit!(GDExtensionObjectPtr, GDExtensionUninitializedObjectPtr);
 impl_as_uninit!(GDExtensionTypePtr, GDExtensionUninitializedTypePtr);
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+
+/// Metafunction to extract inner function pointer types from all the bindgen Option<F> type names.
+pub(crate) trait Inner {
+    type FnPtr;
+}
+
+impl<T> Inner for Option<T> {
+    type FnPtr = T;
+}
+
+/// Often-used types.
+pub(crate) mod fptr {
+    pub(crate) type GetProcAddress =
+        <crate::GDExtensionInterfaceGetProcAddress as crate::Inner>::FnPtr;
+}
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
 
 /// If `ptr` is not null, returns `Some(mapper(ptr))`; otherwise `None`.
 #[inline]

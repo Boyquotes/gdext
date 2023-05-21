@@ -63,9 +63,9 @@ pub(crate) fn generate_sys_interface_file(
         }
 
         impl GDExtensionInterface {
-            pub unsafe fn load(get_proc_address: crate::GDExtensionInterfaceGetProcAddress) -> Self {
-                let get_proc_address = get_proc_address.expect("get_proc_address null; failed to initialize gdext library");
-
+            pub(crate) unsafe fn load(
+                get_proc_address: crate::fptr::GetProcAddress,
+            ) -> Self {
                 Self {
                     #( #fptr_inits )*
                 }
