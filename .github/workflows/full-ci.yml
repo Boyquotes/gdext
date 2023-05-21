@@ -10,8 +10,6 @@ name: Full CI
 on:
   push:
     branches:
-      - staging
-      - trying
 
 env:
   GDEXT_FEATURES: ''

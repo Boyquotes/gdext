@@ -22,7 +22,7 @@ const JSON_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/gen/extension_
 
 pub fn load_gdextension_json(watch: &mut StopWatch) -> String {
     let json_path = Path::new(JSON_PATH);
-    rerun_on_changed(json_path);
+    // rerun_on_changed(json_path);
 
     let godot_bin = locate_godot_binary();
     rerun_on_changed(&godot_bin);
@@ -66,7 +66,7 @@ pub fn write_gdextension_headers(
         // }
     };
 
-    rerun_on_changed(inout_h_path);
+    // rerun_on_changed(inout_h_path);
     patch_c_header(inout_h_path);
     watch.record("patch_header_h");
 

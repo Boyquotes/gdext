@@ -9,7 +9,7 @@ use std::path::Path;
 
 pub(crate) fn generate_rust_binding(in_h_path: &Path, out_rs_path: &Path) {
     let c_header_path = in_h_path.display().to_string();
-    println!("cargo:rerun-if-changed={}", c_header_path);
+    // println!("cargo:rerun-if-changed={}", c_header_path);
 
     let builder = bindgen::Builder::default()
         .header(c_header_path)
